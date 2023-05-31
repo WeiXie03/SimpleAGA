@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import json
 from pyBedGraph import BedGraph
 import pyBigWig
 import multiprocessing as mp, functools
@@ -9,6 +10,11 @@ import itertools
 from math import ceil
 from pathlib import Path
 import argparse
+
+def init_argparser(parser: argparse.ArgumentParser):
+    parser.add_argument("data_dir", type=Path, help="Directory containing all bigWigs to be parsed, including within subdirectories.")
+    parser.add_argument("bin_size", type=int, help="Size of bins to downsample the signal tracks to in base pairs. Also called resolution.")
+    return parser
 
 def collect_bedGraph_paths(bgs_root: Path):
     """
@@ -93,7 +99,8 @@ def bin_chrom_bw(bigwig, chrom_sizes_entry: tuple, bin_size: int) -> list[float]
 
 def bin_bigWig(bigwig, bin_size: int) -> dict[str, list[float]]:
     chrom_sizes = bigwig.chroms()
-    chrom_sizes = dict(itertools.islice(chrom_sizes.items(), 5))
+    # TEMPORARY for testing
+    chrom_sizes = dict(itertools.islice(chrom_sizes.items(), 2))
     # For each chromosome in the bigWig, store
     # the list of bin (mean averaged) signal values
     # with the chromosome's name
@@ -102,7 +109,7 @@ def bin_bigWig(bigwig, bin_size: int) -> dict[str, list[float]]:
         chrom_binned_series[name] = bin_chrom_bw(bigwig, (name,size), bin_size)
     return chrom_binned_series
 
-def bin_bigWigs(bigwig_paths: list[Path], bin_size: int, parallel: bool) -> list[dict[str, list[float]]]:
+def bin_bigWigs(bigwig_paths: list[Path], bin_size: int, parallel: bool) -> dict[dict[str, list[float]]]:
     """
     Bin all bigWigs into bins of size bin_size simultaneously,
     returns a dictionary of {name: [bin vals list]} with all chromosomes.
@@ -123,14 +130,47 @@ def bin_bigWigs(bigwig_paths: list[Path], bin_size: int, parallel: bool) -> list
     # Unfortunately, pyBigWig.bigWigFiles not picklable
     # with mp.Pool() as pool:
     #     bin_vals = pool.map(functools.partial(bin_bigWig, bin_size=bin_size), bw_objs)
-    bin_vals = [bin_bigWig(bw_obj, bin_size=bin_size) for bw_obj in bw_objs]
+    bin_vals = {}
+    for i in len(bw_objs):
+        bw_accession = bigwig_paths[i].stem
+        bin_vals[bw_accession] = bin_bigWig(bw_objs[i], bin_size=bin_size)
 
     return bin_vals
 
-def init_argparser(parser: argparse.ArgumentParser):
-    parser.add_argument("data_dir", type=Path, help="Directory containing all bigWigs to be parsed, including within subdirectories.")
-    parser.add_argument("bin_size", type=int, help="Size of bins to downsample the signal tracks to in base pairs. Also called resolution.")
-    return parser
+'''
+def binned_to_numpy(all_binned_vals_series: dict[dict[str, list[float]]], save_path: Path) -> None:
+    """
+    Save binned values to a numpy array containing
+    every track but binned.
+    Takes list with binned values for all tracks,
+    each track contains all chromosomes as a
+    dictionary of {chrom: [bin vals list]}
+    """
+    # First concatenate all binned values for
+    # each track (all chromosomes) into one vector
+
+def binned_to_json(all_binned_vals_series: list[dict[str, list[float]]], out_dir: Path) -> None:
+    """
+    Save binned values to a JSON and write to out_dir,
+    structure values hierarchically:
+        track name:
+            chromosome
+                bin vals list
+            chromosome
+                bin vals list
+            ...,
+        ...
+    Takes list with binned values for all tracks,
+    each track contains all chromosomes as a
+    dictionary of {chrom: [bin vals list]}
+    """
+    with open(out_dir / "binned_vals.json", "w") as f:
+        json_data = {
+            "bin_size": BIN_SIZE,
+            "tracks": all_binned_vals_series
+        }
+        json.dump(all_binned_vals_series, f, indent=4)
+'''
 
 if __name__ == "__main__":
     DATA_DIR = Path().resolve().parent.parent / "data"
@@ -153,4 +193,6 @@ if __name__ == "__main__":
     print(f"Found {len(bw_paths)} bigWigs")
 
     bw_binned_tracks = bin_bigWigs(bw_paths, bin_size=1000, parallel=True)
-    print(f"Loaded {len(bw_binned_tracks)} bedgraphs")
+    print(f"Loaded {len(bw_binned_tracks)} bedgraphs:")
+    print(bw_binned_tracks[0].keys())
+    print(bw_binned_tracks)
