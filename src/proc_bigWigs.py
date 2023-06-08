@@ -21,9 +21,10 @@ def parse_chromosome_sizes(chrom_sizes_file: Path) -> dict[str, int]:
     """
     chrom_sizes = {}
     with open(chrom_sizes_file, 'r') as f:
-        for line in f:
+        # for line in f:
+        # TEMPORARY for testing
+        for line in itertools.islice(f, 5, 7):
             chrom, size = line.strip().split()
-            # print(chrom, size)
             chrom_sizes[chrom] = int(size)
     return chrom_sizes
 
@@ -123,9 +124,11 @@ class BigWigsBinner:
             chrom_len = self.chrom_ranges.iloc[chrom_idx]["len"]
             chrom_end = chrom_start + chrom_len - 1
 
-            print(f"Loading {chrom_name} into `raw_tracks`, sum = {bigwig.values(chrom_name, 0, chrom_len-1, numpy=True).sum()}", flush=True)
-            self.raw_tracks[bw_idx, chrom_start:chrom_end] = bigwig.values(chrom_name, 0, chrom_len-1, numpy=True).sum()
-            print(f"Now in `raw_tracks[{bw_idx}, {chrom_start}:{chrom_end}]`, sum = {self.raw_tracks[bw_idx, chrom_start:chrom_end].sum()}", flush=True)
+            chrom_vals = bigwig.values(chrom_name, 0, chrom_len-1, numpy=True)
+
+            print(f"Loading {chrom_name} into `raw_tracks`, {np.count_nonzero(np.isnan(chrom_vals))} bases without signal values, sum = {np.nansum(chrom_vals)}", flush=True)
+            self.raw_tracks[bw_idx, chrom_start:chrom_end] = chrom_vals
+            print(f"Now in `raw_tracks[{bw_idx}, {chrom_start}:{chrom_end}]`, sum = {np.nansum(self.raw_tracks[bw_idx, chrom_start:chrom_end])}", flush=True)
     
     def load_all_bws_vals(self) -> None:
         if self.parallel:
@@ -198,7 +201,7 @@ if __name__ == "__main__":
     SIZES_FILE_PATH = DATA_DIR / "hg38.chrom.sizes"
     BIN_SIZE = 1000
 
-    bw_paths = collect_bigWig_paths(DATA_DIR)
+    bw_paths = collect_bigWig_paths(DATA_DIR / "CD14-positive monocyte" / "H3K27ac")
     print(f"Found {len(bw_paths)} bigWigs")
 
     bw_binner = BigWigsBinner(bw_paths, parse_chromosome_sizes(SIZES_FILE_PATH), BIN_SIZE)
@@ -207,6 +210,6 @@ if __name__ == "__main__":
     print(f"Loaded {bw_binner.raw_tracks.shape[0]} bigWigs into array of shape {bw_binner.raw_tracks.shape}")
     print("Sum of binned values:")
     for bw_idx in range(bw_binner.raw_tracks.shape[0]):
-        print(f"\t{bw_paths[bw_idx]}: {bw_binned_tracks[bw_idx].sum()}")
+        print(f"\t{bw_paths[bw_idx]}: {np.nansum(bw_binned_tracks[bw_idx])}")
     bw_binner.save(bw_binned_tracks, DATA_DIR / "binned_vals.npy", DATA_DIR / "chrom_ranges.csv")
     print(f"Saved binned values to {DATA_DIR / 'binned_vals.npy'} and chromosome ranges to {DATA_DIR / 'chrom_ranges.csv'}")
