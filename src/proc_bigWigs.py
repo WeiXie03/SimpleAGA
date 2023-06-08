@@ -21,15 +21,10 @@ def parse_chromosome_sizes(chrom_sizes_file: Path) -> dict[str, int]:
     """
     chrom_sizes = {}
     with open(chrom_sizes_file, 'r') as f:
-    # TEMPORARY for testing
-        for line in itertools.islice(f, 4, 6):
+        for line in f:
             chrom, size = line.strip().split()
-            print(chrom, size)
+            # print(chrom, size)
             chrom_sizes[chrom] = int(size)
-        # for line in f:
-        #     chrom, size = line.strip().split()
-        #     # print(chrom, size)
-        #     chrom_sizes[chrom] = int(size)
     return chrom_sizes
 
 def collect_bigWig_paths(bgs_root: Path) -> list[Path]:
@@ -39,7 +34,7 @@ def collect_bigWig_paths(bgs_root: Path) -> list[Path]:
     if not bgs_root.is_dir():
         raise ValueError(f"{bgs_root} is not a directory")
     # TEMPORARY for testing
-    return list(bgs_root.rglob("*.bigWig"))[:2]
+    return list(bgs_root.rglob("*.bigWig"))
 
 # TODO: argparse -> genomedata-style {--track <track_name> <track_file>}_i, i = 1 to n
 
@@ -196,41 +191,6 @@ class BigWigsBinner:
         """
         np.save(np_save_path, binned_vals)
         self.chrom_ranges.to_csv(chrom_ranges_save_path, index=False)
-
-'''
-def binned_to_numpy(all_binned_vals_series: dict[dict[str, list[float]]], save_path: Path) -> None:
-    """
-    Save binned values to a numpy array containing
-    every track but binned.
-    Takes list with binned values for all tracks,
-    each track contains all chromosomes as a
-    dictionary of {chrom: [bin vals list]}
-    """
-    # First concatenate all binned values for
-    # each track (all chromosomes) into one vector
-
-def binned_to_DataFrame(all_binned_vals_series: list[dict[str, list[float]]], out_dir: Path) -> None:
-    """
-    Save binned values to a JSON and write to out_dir,
-    structure values hierarchically:
-        track name:
-            chromosome
-                bin vals list
-            chromosome
-                bin vals list
-            ...,
-        ...
-    Takes list with binned values for all tracks,
-    each track contains all chromosomes as a
-    dictionary of {chrom: [bin vals list]}
-    """
-    with open(out_dir / "binned_vals.json", "w") as f:
-        json_data = {
-            "bin_size": BIN_SIZE,
-            "tracks": all_binned_vals_series
-        }
-        json.dump(all_binned_vals_series, f, indent=4)
-'''
 
 if __name__ == "__main__":
     DATA_DIR = Path().resolve().parent.parent / "data"
