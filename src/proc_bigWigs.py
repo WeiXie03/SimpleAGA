@@ -21,9 +21,7 @@ def parse_chromosome_sizes(chrom_sizes_file: Path) -> dict[str, int]:
     """
     chrom_sizes = {}
     with open(chrom_sizes_file, 'r') as f:
-        # for line in f:
-        # TEMPORARY for testing
-        for line in itertools.islice(f, 5, 7):
+        for line in f:
             chrom, size = line.strip().split()
             chrom_sizes[chrom] = int(size)
     return chrom_sizes
