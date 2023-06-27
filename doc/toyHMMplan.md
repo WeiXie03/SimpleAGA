@@ -1,5 +1,5 @@
 # Preprocessing
-## Segmenting
+## Binning
 1. _First_ run through genome _base by base_, learn segment transition probabilities.
 2. Save _max likelihood_ set of segments?
 
@@ -18,6 +18,20 @@ Using [pyBigWig](https://github.com/deeptools/pyBigWig)
 ```
 --> Can just use entire chromosome, $$\mathtt{nBins} := \lceil \frac{|chrom|}{|bin|} \rceil.$$
 
+>[!todo]
+
+- [ ] transpose binned matrix --> positions x tracks
+- [ ] check output of pyBigWig
+	- [ ] if resolution of different segments different, simple arithmetic mean inaccurate
+- [ ] ensure final chromosomes' bin "series" contain the data of exactly its coordinates interval
+
 ## Model Creation
+In general, copy Segway.
 - Constraint: `(num binned signals)` = `(num segments)`
-- [ ] check transition model type (i.e. Bernoullli?)
+
+#### Emission Model
+A distribution for each chromatin state _within every track_.
+
+#### Transition Model
+Discrete categorical--categories are each possible chromatin state.
+|> Initialize to uniform?

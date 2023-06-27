@@ -11,10 +11,6 @@ import sys
 from pathlib import Path
 import argparse
 
-def init_argparser(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("data_dir", type=Path, help="Directory containing all bigWigs to be parsed, including within subdirectories.")
-    parser.add_argument("bin_size", type=int, help="Size of bins to downsample the signal tracks to in base pairs. Also called resolution.")
-
 def parse_chromosome_sizes(chrom_sizes_file: Path) -> dict[str, int]:
     """
     Parse chromosome sizes file into a dictionary: {chrom[str]: size[int]}
@@ -169,14 +165,17 @@ class BigWigsBinner:
         # Unfortunately, pyBigWig.bigWigFiles not picklable
         # with mp.Pool() as pool:
         #     bin_vals = pool.map(functools.partial(bin_bigWig, bin_size=bin_size), bw_objs)
+
+        print(f"Length of `raw_tracks`: {self.raw_tracks.size}", flush=True)
+        print(f"Shape of `raw_tracks`: {self.raw_tracks.shape}", flush=True)
+
         n_bws = len(self.bigwigs_tbl.index)
         # mean(sum and div) through the dimension along which
         # all values for each individual bin reside
         # total length of genome divided evenly into bins of size `bin_size`
-        print(f"Length of `raw_tracks`: {self.raw_tracks.size}", flush=True)
-        print(f"Shape of `raw_tracks`: {self.raw_tracks.shape}", flush=True)
         n_bins_alloc_space = int(self.raw_tracks.shape[1] / self.bin_size)
         print(f"Dividing genome into {n_bins_alloc_space} bins of size {self.bin_size}", flush=True)
+
         vals_in_bins = self.raw_tracks.reshape((-1, n_bins_alloc_space, self.bin_size))
         print(f"Averaging through an array of shape {vals_in_bins.shape}", flush=True)
         binned_vals = vals_in_bins.mean(axis=2)
@@ -193,21 +192,33 @@ class BigWigsBinner:
         np.save(np_save_path, binned_vals)
         self.chrom_ranges.to_csv(chrom_ranges_save_path, index=False)
 
-if __name__ == "__main__":
-    DATA_DIR = Path().resolve().parent.parent / "data"
-    print(DATA_DIR.absolute())
-    SIZES_FILE_PATH = DATA_DIR / "hg38.chrom.sizes"
-    BIN_SIZE = 1000
+def init_argparser(parser: argparse.ArgumentParser) -> argparse.Namespace:
+    """
+    - downloads dir
+    - dir for segway runs
+    - dir for final reports
+    """
+    parser.add_argument("data_dir", type=Path, help="Path to directory of data (contains subdirectories for cell types).")
+    parser.add_argument("resolution", type=int, help="Requested resolution (i.e. bin size) in base pairs.")
+    parser.add_argument("--chrom-sizes", type=Path, help="Path to `.sizes` file to use. If not specified, will use `hg38.chrom.sizes` in `data_dir` directory")
+    args = parser.parse_args()
+    if args.chrom_sizes is None:
+        args.chrom_sizes = args.data_dir / "hg38.chrom.sizes"
+    return args
 
-    bw_paths = collect_bigWig_paths(DATA_DIR / "CD14-positive monocyte" / "H3K27ac")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    args = init_argparser(parser)
+
+    bw_paths = collect_bigWig_paths(args.data_dir / "CD14-positive monocyte" / "H3K27ac")
     print(f"Found {len(bw_paths)} bigWigs")
 
-    bw_binner = BigWigsBinner(bw_paths, parse_chromosome_sizes(SIZES_FILE_PATH), BIN_SIZE)
+    bw_binner = BigWigsBinner(bw_paths, parse_chromosome_sizes(args.chrom_sizes), args.resolution)
     bw_binner.load_all_bws_vals()
     bw_binned_tracks = bw_binner.bin_bigWigs()
     print(f"Loaded {bw_binner.raw_tracks.shape[0]} bigWigs into array of shape {bw_binner.raw_tracks.shape}")
     print("Sum of binned values:")
     for bw_idx in range(bw_binner.raw_tracks.shape[0]):
         print(f"\t{bw_paths[bw_idx]}: {np.nansum(bw_binned_tracks[bw_idx])}")
-    bw_binner.save(bw_binned_tracks, DATA_DIR / "binned_vals.npy", DATA_DIR / "chrom_ranges.csv")
-    print(f"Saved binned values to {DATA_DIR / 'binned_vals.npy'} and chromosome ranges to {DATA_DIR / 'chrom_ranges.csv'}")
+    bw_binner.save(bw_binned_tracks, args.data_dir / "binned_vals.npy", args.data_dir / "chrom_ranges.csv")
+    print(f"Saved binned values to {args.data_dir / 'binned_vals.npy'} and chromosome ranges to {args.data_dir / 'chrom_ranges.csv'}")
