@@ -1,6 +1,22 @@
 import numpy as np
 import torch
 import pandas as pd
+from pathlib import Path
+
+def parse_chromosome_sizes(chrom_sizes_file: Path) -> dict[str, int]:
+    """
+    Parse chromosome sizes file into a dictionary: {chrom[str]: size[int]}
+    """
+    chrom_sizes = {}
+    with open(chrom_sizes_file, 'r') as f:
+        # for testing
+        # for line in itertools.islice(f, 5, 7):
+        #     chrom, size = line.strip().split()
+        #     chrom_sizes[chrom] = int(size)
+        for line in f:
+            chrom, size = line.strip().split()
+            chrom_sizes[chrom] = int(size)
+    return chrom_sizes
 
 def find_nan_runs(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """

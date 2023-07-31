@@ -13,22 +13,7 @@ from typing import Union
 from pathlib import Path
 import pickle
 import argparse
-from ._util import find_nan_runs
-
-def parse_chromosome_sizes(chrom_sizes_file: Path) -> dict[str, int]:
-    """
-    Parse chromosome sizes file into a dictionary: {chrom[str]: size[int]}
-    """
-    chrom_sizes = {}
-    with open(chrom_sizes_file, 'r') as f:
-        # for testing
-        for line in itertools.islice(f, 5, 7):
-            chrom, size = line.strip().split()
-            chrom_sizes[chrom] = int(size)
-        # for line in f:
-        #     chrom, size = line.strip().split()
-        #     chrom_sizes[chrom] = int(size)
-    return chrom_sizes
+from ._util import *
 
 def collect_bigWig_paths(bgs_root: Path) -> list[Path]:
     """

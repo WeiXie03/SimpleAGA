@@ -91,7 +91,7 @@ class TestBinner:
         # leaving remainders at __beginning__
         chr3: 0 0.5 0.5 0.5
         '''
-        bw_binner = SimpleAGA.BigWigsBinner([self.TEST_DATA_DIR / "test1.bw"], chrom_sizes, BIN_SIZE)
+        bw_binner = SimpleAGA.BigWigsBinner([self.TEST_DATA_DIR / "test_mono_alt0_1.bw"], chrom_sizes, BIN_SIZE)
         binned_vals = bw_binner.load_bin_all_bws()
 
         assert(len(binned_vals) == 1)
