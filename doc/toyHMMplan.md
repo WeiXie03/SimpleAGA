@@ -32,6 +32,9 @@ In general, copy Segway.
 #### Emission Model
 A distribution for each chromatin state _within every track_.
 
+To retrieve, throw all emission nodes' params into $k \times d$ Tensors:
+- Means: `d_ij.means`,
+- Variances: `d_ij.covs`
 #### Transition Model
 Discrete categorical--categories are each possible chromatin state.
 |> Initialize to uniform?
