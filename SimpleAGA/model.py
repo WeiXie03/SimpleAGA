@@ -180,15 +180,14 @@ if __name__ == "__main__":
     #   - H3K27ac,
     #   - H3K27me3
     # =================== #
-    # DATA_DIR = Path("../../data")
-    # chrom_sizes_path = DATA_DIR / "hg38.chrom.sizes"
-    DATA_DIR = Path("/home/tom/Public/projSAGA/data/CD14-sub/binned_rands")
-    chrom_sizes_path = Path("/home/tom/Public/projSAGA/data/hg38.chrom.sizes")
+    ROOT_DIR = Path("/home/tom/Public/projSAGA/data/CD14-sub")
+    DATA_DIR = ROOT_DIR / "rep1" / "binned21"
+    chrom_sizes_path = ROOT_DIR / "hg38_chr21.chrom.sizes"
 
     chrom_sizes = _util.parse_chromosome_sizes(chrom_sizes_path)
     chrom_sizes = pd.DataFrame(chrom_sizes.items(), columns=["name", "size"])
     # Load in the binned data (tensors)
-    all_binneds = load_all_chrom_tensors(chrom_sizes["name"], DATA_DIR/"combined_out")
+    all_binneds = load_all_chrom_tensors(chrom_sizes["name"], DATA_DIR)
 
     # Train the model
     emit_means, emit_covs, transitions = main(25, N_PROCS, all_binneds, max_iter=1000)
