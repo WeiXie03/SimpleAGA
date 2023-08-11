@@ -14,8 +14,7 @@ import itertools
 import os
 from enum import Enum
 from pathlib import Path
-from pomegranate.distributions import Normal, Categorical
-from pomegranate.hmm import DenseHMM
+from hmmlearn import hmm
 import _util
 
 class HandleMissingStrategy(Enum):
@@ -31,15 +30,12 @@ def omit_missing(chrom_arr: torch.Tensor) -> [torch.Tensor, torch.Tensor]:
     For a single chromosome (represented by one 2D tensor, each row a bigWig track)
     """
     # Find columns with NaN values
-    # "Any" _through_ columns, reducing the __0__th dimension
-    # print(chrom_arr)
-    nan_cols = torch.any(torch.isnan(chrom_arr), 0)
-    # print("NaN columns:")
-    # print(nan_cols)
+    # "Any" _through_ columns, reducing the 1th dimension
+    nan_rows = torch.any(torch.isnan(chrom_arr), 1)
     # Convert from bool mask to indices
-    nan_col_idx = torch.where(nan_cols)[0]
-    # Remove columns with NaN values
-    return chrom_arr[:, ~nan_cols], nan_col_idx
+    nan_rows_idx = torch.where(nan_rows)[0]
+    # Remove rows with NaN values
+    return chrom_arr[~nan_rows,:], nan_rows_idx
 
 def load_binned_chrom(chr_name: str, data_dir: Path) -> tuple[str, torch.Tensor]:
     """
@@ -82,14 +78,13 @@ def train(model, observations: torch.Tensor, n_procs: int) -> None:
     #print([obs for obs, _ in obs_omitidx_pairs_list])
     #observations = torch.vstack([obs for obs, _ in obs_omitidx_pairs_list])
 
-    # input: (n_tracks, n_bins), emissions convention: (n_labels, n_tracks)
-    observations = observations.transpose(0, 1).unsqueeze(0)
     print("Processesed observations after omitting missing values:", observations.shape)
     print(observations)
 
-    model.fit(observations)
+    model.fit(observations.numpy())
+    print(model.monitor_)
 
-def run_chrom(num_labels: int, n_procs: int, observations: torch.Tensor, tol=10, max_iter=None, handle_missing=HandleMissingStrategy.OMIT) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+def run_chrom(num_labels: int, n_procs: int, observations: torch.Tensor, tol=None, max_iter=None, handle_missing=HandleMissingStrategy.OMIT) -> (torch.Tensor, torch.Tensor, torch.Tensor):
     """
     Full training pipeline--initialize, train and return the model parameters
     Model parameters--2 2D tensors and 1 3D tensor:
@@ -103,38 +98,21 @@ def run_chrom(num_labels: int, n_procs: int, observations: torch.Tensor, tol=10,
     """
     # Random initialize the model
     observations, missing_idx = omit_missing(observations)
-    # one dim per track, init covs as identity
-    init_means = observations.mean(1)
-    dists = [Normal(init_means, torch.eye(len(init_means))) for state in range(num_labels)]
-    print("Initialized emission distributions:", dists)
-    for d in dists:
-        print('means:', d.means, '\ncovs:', d.covs)
-    # uniform prob
-    init_transitions = torch.ones(num_labels, num_labels) / num_labels
-    init_starts = torch.ones(num_labels) / num_labels
-    init_ends = torch.ones(num_labels) / num_labels
 
     # Normals will *implicitly* be cast to n_tracks dimensional _through_ `fit(observations)`
     if max_iter == None and tol > 0:
-        # model = DenseHMM([Normal()] * num_labels, tol=tol, verbose=True)
-        model = DenseHMM(dists, edges=init_transitions, starts=init_starts, ends=init_ends, tol=tol, verbose=True)
+        model = hmm.GaussianHMM(n_components=num_labels, tol=tol, covariance_type="full", verbose=True)
     elif tol == None and max_iter > 0:
-        # model = DenseHMM([Normal()] * num_labels, max_iter=max_iter, verbose=True)
-        model = DenseHMM(dists, edges=init_transitions, starts=init_starts, ends=init_ends, max_iter=max_iter, verbose=True)
+        model = hmm.GaussianHMM(n_components=num_labels, n_iter=max_iter, covariance_type="full", verbose=True)
     else:
-        print("Error: either tol or max_iter must be positive")
-        model = DenseHMM(dists, edges=init_transitions, starts=init_starts, ends=init_ends, verbose=True)
+        print("Either: (1) neither tol or max_iter is specified, or (2) both tol and max_iter are specified. Continuing with default tol=10.")
+        model = hmm.GaussianHMM(n_components=num_labels, tol=10, covariance_type="full", verbose=True)
     print("Initialized model:", model)
     train(model, observations, n_procs)
     
-    # Return the model parameters
-    emit_means = torch.vstack([d.means for d in model.distributions])
-    # will be 3D tensor (n_labels, n_tracks, n_tracks)?
-    emit_covs = torch.stack([d.covs for d in model.distributions])
-    transitions = model.edges
-    return emit_means, emit_covs, transitions
+    return model.means_, model.covars_, model.transmat_
 
-def main(num_labels: int, n_procs: int, all_binneds: dict[str, torch.Tensor], tol=10, max_iter=None):
+def main(num_labels: int, n_procs: int, all_binneds: dict[str, torch.Tensor], tol=None, max_iter=None, results_dir=None):
     for chrom, tensor in all_binneds.items():
         print(chrom, ':', tensor.shape)
         # Train the model
@@ -144,7 +122,13 @@ def main(num_labels: int, n_procs: int, all_binneds: dict[str, torch.Tensor], to
         # print("Emission covariances:")
         # print(emit_covs)
         print("Transitions:")
-        print(transitions)
+        print(transitions, '\n')
+
+    if isinstance(results_dir, Path):
+        results_dir.mkdir(parents=True, exist_ok=True)
+        np.save(results_dir/"emissions_means.npy", emit_means)
+        np.save(results_dir/"emissions_covars.npy", emit_covs)
+        np.save(results_dir/"transitions.npy", transitions)
     
     return emit_means, emit_covs, transitions
 
