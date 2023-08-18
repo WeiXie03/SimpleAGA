@@ -1,6 +1,11 @@
+from math import ceil
 import numpy as np
 import torch
 import pandas as pd
+import multiprocessing as mp
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+import functools
+import threading
 from pathlib import Path
 
 def parse_chromosome_sizes(chrom_sizes_file: Path) -> dict[str, int]:
@@ -41,3 +46,49 @@ def find_nan_runs(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
     # Return the starting and ending indices of NaN runs
     return start_indices, end_indices
+
+def gen_chrom_intervs_tbl(chrom: str, procd_data: np.ndarray, missing_idx: np.ndarray, 
+                           chrom_sizes: pd.Series, bin_size: int) -> pd.DataFrame:
+    # TODO: move model.predict_proba() to all chroms function by using lengths arg
+    """
+    Generate a DataFrame with columns for the original intervals of the
+    bins for the given chromosome.
+    To be used for generating the parsed posteriors table.
+
+    Args
+    ----
+    chrom_sizes: A Series of the sizes of the chromosomes in
+    the data to train on. Must have:
+        - An index of the chromosome names.
+        - A column "size": The sizes of the chromosome.
+    """
+    chrom_size = chrom_sizes[chrom]
+
+    n_bins = ceil(chrom_size/bin_size)
+    print(f"Assuming ceil({chrom_size}/{bin_size}) = {n_bins} bins.")
+
+    # libBigWig (and thereby bigWigs2tensors) leaves
+    # unevenly divided remainder values in the first bin.
+    bin_rem = chrom_size % bin_size
+    offset = bin_size - bin_rem
+    starts = np.arange(-offset, chrom_size, bin_size, dtype=np.int32)
+    ends = starts + (bin_size - 1)
+    # After entire starts column is generated, correct first bin
+    starts[0] = 0
+
+    # Convert indices to a mask
+    avail_mask = np.ones((n_bins,), dtype=bool)
+    avail_mask[missing_idx] = False
+
+    return pd.DataFrame({
+        "chr": chrom,
+        "start": starts[avail_mask],
+        "end": ends[avail_mask]
+    })
+
+def mp_arrays_lens(arrays: list[np.ndarray], n_procs: int) -> list[int]:
+    """
+    Return the lengths of each array in arrays
+    """
+    with mp.Pool(n_procs) as pool:
+        return list(pool.map(len, arrays))
