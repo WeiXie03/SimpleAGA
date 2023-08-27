@@ -210,7 +210,7 @@ class RunManager():
             with open(save_dir/"hmmlearn_model.pkl", "wb") as f:
                 pickle.dump(self.model, f)
 
-            posteriors_tbl.to_csv(save_dir/"parsed_posteriors.csv", index=False)
+            posteriors_tbl.to_csv(save_dir/"parsed_posteriors.csv")
 
 def main(chrom_sizes_path: Path, resolution: int,
          model_path: Path = None,

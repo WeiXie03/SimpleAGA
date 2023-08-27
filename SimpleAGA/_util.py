@@ -67,14 +67,13 @@ def gen_chrom_intervs_tbl(chrom: str, procd_data: np.ndarray, missing_idx: np.nd
     n_bins = ceil(chrom_size/bin_size)
     print(f"Assuming ceil({chrom_size}/{bin_size}) = {n_bins} bins.")
 
-    # libBigWig (and thereby bigWigs2tensors) leaves
-    # unevenly divided remainder values in the first bin.
+    # bigWigs2tensors leaves unevenly divided
+    # remainder values in the last bin.
     bin_rem = chrom_size % bin_size
-    offset = bin_size - bin_rem
-    starts = np.arange(-offset, chrom_size, bin_size, dtype=np.int32)
+    starts = np.arange(0, chrom_size, bin_size, dtype=np.int32)
     ends = starts + (bin_size - 1)
-    # After entire starts column is generated, correct first bin
-    starts[0] = 0
+    # After entire ends column is generated, correct last
+    ends[-1] = starts[-1] + bin_rem
 
     # Convert indices to a mask
     avail_mask = np.ones((n_bins,), dtype=bool)
