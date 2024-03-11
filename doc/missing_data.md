@@ -21,4 +21,4 @@ _June 19, 2023_
 => just omit, literally shorten track fed in by cutting out?
 
 ### Track Weighting
-For each $i$th track, define $N^{(i)} := \sum_t \mathring{X_t}$. Then _normalize_ each track's contribution to the hidden state by "proprotionalizing" to the non-missing data content/ratio in each: $$P(X_t|Q_t) := P(X_t|Q_t) ^ {\frac {N^(i)} {N^*}}, ~ t=1,...,T$$ where $N^* = \max_j(N^(j))$ and $T$ is the total number of bins.
+For each $i$th track, define $N^{(i)} := \sum_t \mathring{X_t}$, where $\mathring{X_t} = 1$ if there is an observation for $t$ and 0 otherwise. Then _normalize_ each track's contribution to the hidden state by "proprotionalizing" to the non-missing data content/ratio in each: $$P(X_t|Q_t) := P(X_t|Q_t) ^ {\frac {N^{(i)}} {N^*}}, ~ t=1,...,T$$ where $N^* = \max_j (N^{(j)})$ and $T$ is the total number of bins.

@@ -20,7 +20,7 @@ import pickle
 from hmmlearn import hmm
 from SimpleAGA import _util
 
-def load_chrom_tensor_to_array(path: Path) -> torch.Tensor:
+def load_chrom_tensor_to_array(path: Path) -> np.ndarray:
     """
     Load binned data for chromosome chr_name from its torch .pt file in data_dir,
     assuming each .pt file is named <chr_name>.pt
@@ -34,7 +34,30 @@ def load_chrom_tensor_to_array(path: Path) -> torch.Tensor:
     finally:
         return data
 
-def omit_missing(chrom_arr: np.ndarray) -> [np.ndarray, np.ndarray]:
+def load_chrom_tensor_to_array_spec_coords(intervs_info_df_chr: "pd.DataFrame | pd.core.groupby.generic.DataFrameGroupBy", binned_chroms_paths: pd.Series) -> np.ndarray:
+    """
+    Same as load_chrom_tensor_to_array, but takes a DataFrame of
+    genomic coordinates for the chromosome:
+    DataFrame must be the first 3 columns of a BED file:
+        - Chromosome name
+        - Start position
+        - End position
+    """
+    if not isinstance(intervs_info_df_chr, pd.DataFrame):
+        raise TypeError("intervs_info_df_chr must be a DataFrame")
+
+    else:
+        # Path of data for this chromosome
+        data = load_chrom_tensor_to_array(binned_chroms_paths[intervs_info_df_chr.index[0]])
+        # Subset to coordinates
+        # intervs_info_df_chr = chrom, *start*, *end*
+        if len(intervs_info_df_chr.index) > 0:
+            return data[intervs_info_df_chr.iloc[:,1]:intervs_info_df_chr.iloc[:,2],:]
+        else:
+            # No coordinates
+            return np.empty(data.shape)
+
+def omit_missing(chrom_arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
     Omit positions at which _any_ of the tracks are missing values from all_binneds
     Returns:
@@ -55,9 +78,10 @@ class RunManager():
     Manages loading of training data, training and running model,
     parsing and saving the results.
     """
-    def __init__(self, chrom_sizes: pd.Series, resolution: int,
+    def __init__(self, chrom_sizes: pd.Series, resolution: int, coords: pd.DataFrame = None,
                  model: hmm.GaussianHMM = None,
-                 num_labels: int = None, n_iter: int = None):
+                 num_labels: int = None, n_iter: int = None,
+                 rand_gen: np.random.BitGenerator = np.random.default_rng()):
         """
         Optionally initializes a model.
 
@@ -71,9 +95,21 @@ class RunManager():
         resolution: The resolution (bin size) in bp the data were binned with.
 
         num_labels: The number of labels (hidden states) for the model.
+
+        coords: Optionally specify genomic coordinates to use (subset from the data).
+        DataFrame must be the first 3 columns of a BED file:
+            - Chromosome name
+            - Start position
+            - End position
         """
         self.chrom_sizes = chrom_sizes
         self.bin_size = resolution
+        self.rand_gen = rand_gen
+
+        if isinstance(coords, pd.DataFrame):
+            self.coords = coords
+        else:
+            self.coords = None
 
         if isinstance(model, hmm.GaussianHMM):
             self.model = model
@@ -81,10 +117,11 @@ class RunManager():
             self.model = hmm.GaussianHMM(n_components=num_labels, covariance_type="full", n_iter=n_iter, verbose=True)
         else:
             raise ValueError("Must provide either a model, or num_labels and n_iter.")
-
-    def load_all_chrom_arrays(self, binned_chroms_paths: pd.Series, n_threads=None) -> list[np.ndarray]:
+        
+    def load_all_chrom_arrays(self, binned_chroms_paths: pd.Series,
+                              n_threads=None) -> list[np.ndarray]:
         """
-        Maps load_chrom_tensor to all chromosomes in binned_chroms_paths,
+        Maps load_chrom_tensor_to_array to all chromosomes in binned_chroms_paths,
         returning them all in a list in the same order as in binned_chroms_paths.
 
         Takes a DataFrame including the paths to the binned data for each chromosome.
@@ -98,19 +135,33 @@ class RunManager():
         
         print(f"Loading {len(binned_chroms_paths.index)} chromosomes with {n_threads} threads...")
 
-        with ThreadPoolExecutor(n_threads) as pool:
-            chrom_arrs = pool.map(load_chrom_tensor_to_array, binned_chroms_paths.tolist())
+        if isinstance(self.coords, pd.DataFrame):
+            chrom_arrs = self.coords.parallel_apply(load_chrom_tensor_to_array, axis=1,
+                                               binned_chroms_paths=binned_chroms_paths)
+        elif self.coords == None:
+            with ThreadPoolExecutor(n_threads) as pool:
+                chrom_arrs = pool.map(load_chrom_tensor_to_array, binned_chroms_paths.tolist())
         
         return chrom_arrs
     
-    def train_batch(self, train_seqs: list[np.ndarray], seq_lens: list[int], n_procs: int = None):
+    def train_batch(self, train_seqs: list[np.ndarray], seq_lens: list[int],
+                    frac: float = 0.03, n_samples: int = None,
+                    n_procs: int = None):
         """
-        Trains the model on the given sequences.
+        Trains the model on random subsequences totalling `frac` of the sum of the lengths
+        of the given sequences.
+        If `n_samples` is given, samples `n_samples` random subsequences each of length
+        `frac`*$\sum_{seq} length(seq)$ / `n_samples`.
+        Otherwise, samples one random subsequence from each given sequence of length
+        `frac`*length(seq).
         """
         if not isinstance(n_procs, int):
             if n_procs != None:
                 print("Error: n_procs must be an int")
             n_procs = min(mp.cpu_count(), len(train_seqs))
+        
+        if not isinstance(frac, float):
+            print("Error: frac must be a float")
 
         # print("Training sequence data shapes:")
         # print([seq.shape for seq in train_seqs])
@@ -118,18 +169,23 @@ class RunManager():
         if len(train_seqs) <= 0:
             raise ValueError("Must provide at least one training sequence.")
         elif len(train_seqs) == 1:
-            self.model.fit(train_seqs[0])
+            mini_start, mini_end = _util.slice_rand_subseq_idx(train_seqs[0], frac)
+            self.model.fit(train_seqs[0][mini_start:mini_end])
         else:
-            # print(f"Training sequence lengths:")
-            # print(list(seq_lens))
+            # one from each sequence
+            if n_samples == None:        
+                subseqs = _util.sample_minibatches(train_seqs, frac=frac, lens=seq_lens, rand_gen=self.rand_gen)
+            # n_samples random subsequences
+            else:
+                subseqs = _util.sample_minibatches(train_seqs, frac=frac, lens=seq_lens, n_samples=n_samples, rand_gen=self.rand_gen)
 
-            self.model.fit(train_seqs, lengths=seq_lens)
+            self.model.fit(np.vstack(np.concatenate(subseqs, axis=0)), lengths=_util.mp_arrays_lens(subseqs, n_procs))
 
     def gen_posteriors_tbl(self, train_seqs: list[np.ndarray], seq_lens: list[int], missing_idxs_list: list[np.ndarray], n_procs: int = None
                            ) -> pd.DataFrame:
         if not isinstance(n_procs, int):
             if n_procs != None:
-                print("Error: n_procs must be an int")
+                print("Error: n_procs must be an int, setting to min(n_procs, len(train_seqs))")
             n_procs = min(mp.cpu_count(), len(train_seqs))
         
         with mp.Pool(n_procs) as pool:
@@ -138,7 +194,6 @@ class RunManager():
         
         combined_intervs_tbl = pd.concat(list(intervs_tbls), axis=0, ignore_index=True)
 
-        print(len(train_seqs), "chromosomes")
         if len(train_seqs) == 1:
             posteriors = self.model.predict_proba(train_seqs[0])
         else:
@@ -169,7 +224,7 @@ class RunManager():
         Args
         ----
         binned_chroms_paths: A DataFrame including the paths to the binned data for each chromosome.
-        Index must be the chromosome names. must include a column "path" of paths.
+        Index must be the chromosome names, must include a column "path" of paths.
         Must be PyTorch tensors; extension ".pt".
 
         """
@@ -188,13 +243,13 @@ class RunManager():
         # for (chrom, miss_idx) in zip(self.chrom_sizes.index, chroms_miss_idx):
         #     print(f"{chrom}: {miss_idx}")
 
+        # Mark each processed chromosome tensor length with its chromosome name
+        procd_chroms_lens = pd.Series(_util.mp_arrays_lens(pruned_tensors, n_procs), index=self.chrom_sizes.index)
         # Run model
         if train:
             print("Training HMM...")
-            self.train_batch(pruned_tensors, n_procs)
+            self.train_batch(pruned_tensors, procd_chroms_lens.to_list(), n_procs=n_procs)
 
-        # Mark each processed chromosome tensor length with its chromosome name
-        procd_chroms_lens = pd.Series(_util.mp_arrays_lens(pruned_tensors, n_procs), index=self.chrom_sizes.index)
         print("Generating posteriors table...")
         posteriors_tbl = self.gen_posteriors_tbl(pruned_tensors, procd_chroms_lens, chroms_miss_idx, n_procs)
 
@@ -212,7 +267,11 @@ class RunManager():
 
             posteriors_tbl.to_csv(save_dir/"parsed_posteriors.csv")
 
+# TODO: Add command line interface
 def main(chrom_sizes_path: Path, resolution: int,
-         model_path: Path = None,
+        coords_path: Path = None, model_path: Path = None,
          num_labels: int = None, n_iter: int = None):
     pass
+    # if isinstance(coords_path, Path):
+    #     # BED file: first 3 cols = chrom, start, end
+    #     coords = pd.read_csv(coords_path, sep="\t", header=None, index_col=0, usecols=[0,1,2])

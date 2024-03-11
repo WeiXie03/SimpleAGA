@@ -91,3 +91,59 @@ def mp_arrays_lens(arrays: list[np.ndarray], n_procs: int) -> list[int]:
     """
     with mp.Pool(n_procs) as pool:
         return list(pool.map(len, arrays))
+
+def slice_rand_subseq_idx(arr_len: int, subseq_len: int, rand_rng: np.random.BitGenerator = None) -> tuple[int,int]:
+    """
+    Return a tuple of [start, end) for a random contiguous subsequence of length subseq_len
+    """
+    if 0 > subseq_len or subseq_len > arr_len:
+        raise ValueError("subseq_len must be in [0, arr_len]")
+    
+    if rand_rng == None:
+        rand_rng = np.random.default_rng()
+
+    start = rand_rng.integers(0, arr_len - subseq_len + 1, endpoint=True)
+    # print(" ", start, "->", start + subseq_len, " ")
+    end = start + subseq_len
+    return (start, end)
+    
+def sample_minibatches(arrays: list[np.ndarray], frac: float, n_samples: int = None,
+                       lens: list[int] = None,
+                       rand_gen: np.random.BitGenerator = None, n_proc: int = None) -> list[np.ndarray]:
+    """
+    For each array in arrays, return a random contiguous subsequence of length frac*len(array)
+    If `n_samples` is given, samples `n_samples` random subsequences each of length
+    `frac`*$\sum_{seq} length(seq)$ / `n_samples`.
+    Otherwise, samples one random subsequence from each given sequence of length
+    `frac`*length(seq).
+    """
+    if n_proc == None:
+        n_proc = mp.cpu_count()
+
+    if lens is None:
+        lens = mp_arrays_lens(arrays, n_proc)
+    
+    if n_samples == None:
+        with mp.Pool(n_proc) as pool:
+            subseq_idx = pool.starmap(slice_rand_subseq_idx, [(l, int(frac * l)) for l in lens])
+            # for _, (start, end) in zip(arrays, subseq_idx):
+            #     print(" ", start, "->", end, " ")
+            return [arr[start:end] for arr, (start, end) in zip(arrays, subseq_idx)]
+    else:
+        total_len = sum(lens)
+        subseq_len = int(frac * total_len / n_samples)
+
+        # n_samples must not be so small such that a subsample longer than the entire shortest interval
+        if subseq_len > min(lens):
+            raise ValueError("n_samples too large, subsample longer than the whole shortest interval")
+        # n_samples must not be so large such that a subsample shorter than 1
+        if subseq_len < 1:
+            raise ValueError("n_samples too small, subsample shorter than 1")
+
+        # each subsample is of length frac * sum{len(array)} / n_samples
+        # sample n_samples of these random contiguous subsequences
+        rand_rng = np.random.default_rng()
+        chosen_arrays_idx = rand_rng.choice(len(arrays), n_samples, replace=True)
+        with mp.Pool(n_proc) as pool:
+            subseq_idx = pool.starmap(slice_rand_subseq_idx, [(arrays[i].shape[0], subseq_len) for i in chosen_arrays_idx])
+        return [arrays[i][start:end] for i, (start, end) in zip(chosen_arrays_idx, subseq_idx)]
