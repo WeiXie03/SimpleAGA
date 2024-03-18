@@ -85,12 +85,12 @@ def gen_chrom_intervs_tbl(chrom: str, procd_data: np.ndarray, missing_idx: np.nd
         "end": ends[avail_mask]
     })
 
-def mp_arrays_lens(arrays: list[np.ndarray], n_procs: int) -> list[int]:
+def mp_arrays_lens(arrays: list[np.ndarray], n_procs: int) -> np.ndarray:
     """
     Return the lengths of each array in arrays
     """
     with mp.Pool(n_procs) as pool:
-        return list(pool.map(len, arrays))
+        return np.array(pool.map(len, arrays))
 
 def slice_rand_subseq_idx(arr_len: int, subseq_len: int, rand_rng: np.random.BitGenerator = None) -> tuple[int,int]:
     """
@@ -106,24 +106,46 @@ def slice_rand_subseq_idx(arr_len: int, subseq_len: int, rand_rng: np.random.Bit
     # print(" ", start, "->", start + subseq_len, " ")
     end = start + subseq_len
     return (start, end)
+
+def slice_rand_subseqs_idx(arr_lens: np.ndarray, subseq_len: int, rand_rng: np.random.BitGenerator = None) -> list[tuple[int,int]]:
+    """
+    Return a list of tuples of [start, end) for a random contiguous subsequence of length subseq_len for each array in arr_lens
+    """
+    if rand_rng == None:
+        rand_rng = np.random.default_rng()
+    if np.any(arr_lens < subseq_len):
+        raise ValueError("subseq_len must be less than every array length")
     
-def sample_minibatches(arrays: list[np.ndarray], frac: float, n_samples: int = None,
-                       lens: list[int] = None,
+    idxs = []
+    for arr_len in arr_lens:
+        start = rand_rng.integers(0, arr_len - subseq_len + 1, endpoint=True)
+        # ensure no overlap and that subsequence will not extend past the end of the array
+        while (any([start < s and s < start + subseq_len for s, _ in idxs]) or
+               start + subseq_len > arr_len):
+            start = rand_rng.integers(0, arr_len - subseq_len + 1, endpoint=True)
+        idxs.append((start, start + subseq_len))
+
+    return idxs
+    
+def sample_minibatches(arrays: list[np.ndarray], frac: float, subseq_len: int = None,
+                       lens: np.ndarray = None,
                        rand_gen: np.random.BitGenerator = None, n_proc: int = None) -> list[np.ndarray]:
     """
+    _WARNING_: The default of this function when subseq_len is not given is broken. If more than one subsequence per array is desired, this will not sample enough to cover frac of the genome.
     For each array in arrays, return a random contiguous subsequence of length frac*len(array)
-    If `n_samples` is given, samples `n_samples` random subsequences each of length
-    `frac`*$\sum_{seq} length(seq)$ / `n_samples`.
+    If `subsample_len` is given, samples `n` random subsequences each of length
+    `subsample_len`, where `n`*`subsample_len` = `frac` * $sum_{seq} |seq|$.
     Otherwise, samples one random subsequence from each given sequence of length
     `frac`*length(seq).
     """
+
     if n_proc == None:
         n_proc = mp.cpu_count()
 
     if lens is None:
         lens = mp_arrays_lens(arrays, n_proc)
     
-    if n_samples == None:
+    if subseq_len == None:
         with mp.Pool(n_proc) as pool:
             subseq_idx = pool.starmap(slice_rand_subseq_idx, [(l, int(frac * l)) for l in lens])
             # for _, (start, end) in zip(arrays, subseq_idx):
@@ -131,7 +153,8 @@ def sample_minibatches(arrays: list[np.ndarray], frac: float, n_samples: int = N
             return [arr[start:end] for arr, (start, end) in zip(arrays, subseq_idx)]
     else:
         total_len = sum(lens)
-        subseq_len = int(frac * total_len / n_samples)
+        # better to sample a little more than less
+        n_samples = ceil(frac*total_len / subseq_len)
 
         # n_samples must not be so small such that a subsample longer than the entire shortest interval
         if subseq_len > min(lens):
@@ -144,6 +167,5 @@ def sample_minibatches(arrays: list[np.ndarray], frac: float, n_samples: int = N
         # sample n_samples of these random contiguous subsequences
         rand_rng = np.random.default_rng()
         chosen_arrays_idx = rand_rng.choice(len(arrays), n_samples, replace=True)
-        with mp.Pool(n_proc) as pool:
-            subseq_idx = pool.starmap(slice_rand_subseq_idx, [(arrays[i].shape[0], subseq_len) for i in chosen_arrays_idx])
+        subseq_idx = slice_rand_subseqs_idx(lens[chosen_arrays_idx], subseq_len, rand_rng)
         return [arrays[i][start:end] for i, (start, end) in zip(chosen_arrays_idx, subseq_idx)]

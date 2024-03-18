@@ -145,13 +145,13 @@ class RunManager():
         return chrom_arrs
     
     def train_batch(self, train_seqs: list[np.ndarray], seq_lens: list[int],
-                    frac: float = 0.03, n_samples: int = None,
+                    frac: float = 0.03, subsample_len: int = None,
                     n_procs: int = None):
         """
         Trains the model on random subsequences totalling `frac` of the sum of the lengths
         of the given sequences.
-        If `n_samples` is given, samples `n_samples` random subsequences each of length
-        `frac`*$\sum_{seq} length(seq)$ / `n_samples`.
+        If `subsample_len` is given, samples `n` random subsequences each of length
+        `subsample_len`, where `n`*`subsample_len` = `frac` * $sum_{seq} |seq|$.
         Otherwise, samples one random subsequence from each given sequence of length
         `frac`*length(seq).
         """
@@ -173,11 +173,11 @@ class RunManager():
             self.model.fit(train_seqs[0][mini_start:mini_end])
         else:
             # one from each sequence
-            if n_samples == None:        
+            if subsample_len == None: 
                 subseqs = _util.sample_minibatches(train_seqs, frac=frac, lens=seq_lens, rand_gen=self.rand_gen)
             # n_samples random subsequences
             else:
-                subseqs = _util.sample_minibatches(train_seqs, frac=frac, lens=seq_lens, n_samples=n_samples, rand_gen=self.rand_gen)
+                subseqs = _util.sample_minibatches(train_seqs, frac=frac, lens=seq_lens, subseq_len=subsample_len, rand_gen=self.rand_gen)
 
             self.model.fit(np.vstack(np.concatenate(subseqs, axis=0)), lengths=_util.mp_arrays_lens(subseqs, n_procs))
 
