@@ -214,7 +214,8 @@ class RunManager():
         print(posteriors_tbl.head())
         
     def run_batch(self, binned_chroms_paths: pd.Series, save_dir: Path = None,
-                  n_procs: int = None, train: bool = True):
+                  train: bool = True, minibatch_frac: float = None, subsample_len: int = None,
+                  n_procs: int = None):
         """
         Full pipeline for a batch of data:
         1. Load data.
@@ -248,7 +249,7 @@ class RunManager():
         # Run model
         if train:
             print("Training HMM...")
-            self.train_batch(pruned_tensors, procd_chroms_lens.to_list(), n_procs=n_procs)
+            self.train_batch(pruned_tensors, procd_chroms_lens.to_numpy(), frac=minibatch_frac, subsample_len=subsample_len, n_procs=n_procs)
 
         print("Generating posteriors table...")
         posteriors_tbl = self.gen_posteriors_tbl(pruned_tensors, procd_chroms_lens, chroms_miss_idx, n_procs)
