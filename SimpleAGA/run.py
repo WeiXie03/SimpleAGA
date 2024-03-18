@@ -27,7 +27,7 @@ import pandas as pd
 from pathlib import Path
 import shutil
 import argparse
-import wandb
+#import wandb
 
 def init_parser():
     parser = argparse.ArgumentParser(description="Run the SimpleAGA model on a set of chromosomes.")
@@ -70,6 +70,8 @@ def collect_chroms_info(rep_dir: Path, chrom_sizes_path: Path) -> pd.DataFrame:
     tensor_paths.index = tensor_paths.apply(lambda x: str(Path(x).stem))
     
     chroms_meta_tbl["path"] = tensor_paths
+    # don't take the tensors for chromsomes not in the chrom_sizes file
+    chroms_meta_tbl.dropna(inplace=True, subset=["size", "path"])
 
     return chroms_meta_tbl
 

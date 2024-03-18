@@ -7,7 +7,7 @@ from math import ceil
 import numpy as np
 import torch
 import pandas as pd
-from pyBedGraph import BedGraph
+#from pyBedGraph import BedGraph
 import multiprocessing as mp
 import functools
 import threading
