@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 import pickle
 from hmmlearn import hmm
-from SimpleAGA import _util
+import _util
 
 def load_chrom_tensor_to_array(path: Path) -> np.ndarray:
     """
@@ -28,11 +28,10 @@ def load_chrom_tensor_to_array(path: Path) -> np.ndarray:
     """
     print(f"Loading {path}...")
     try:
-        data = torch.load(path).numpy()
+        data = torch.load(str(path)).numpy()
+        return data
     except FileNotFoundError:
         print(f"{path} not found")
-    finally:
-        return data
 
 def load_chrom_tensor_to_array_spec_coords(intervs_info_df_chr: "pd.DataFrame | pd.core.groupby.generic.DataFrameGroupBy", binned_chroms_paths: pd.Series) -> np.ndarray:
     """
@@ -124,7 +123,7 @@ class RunManager():
         Maps load_chrom_tensor_to_array to all chromosomes in binned_chroms_paths,
         returning them all in a list in the same order as in binned_chroms_paths.
 
-        Takes a DataFrame including the paths to the binned data for each chromosome.
+        Takes a Series including the paths to the binned data for each chromosome.
         Index must be the chromosome names. Must include a column "path" of paths.
         Must be PyTorch tensors; extension ".pt".
         """
@@ -267,12 +266,3 @@ class RunManager():
                 pickle.dump(self.model, f)
 
             posteriors_tbl.to_csv(save_dir/"parsed_posteriors.csv")
-
-# TODO: Add command line interface
-def main(chrom_sizes_path: Path, resolution: int,
-        coords_path: Path = None, model_path: Path = None,
-         num_labels: int = None, n_iter: int = None):
-    pass
-    # if isinstance(coords_path, Path):
-    #     # BED file: first 3 cols = chrom, start, end
-    #     coords = pd.read_csv(coords_path, sep="\t", header=None, index_col=0, usecols=[0,1,2])
