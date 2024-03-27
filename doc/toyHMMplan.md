@@ -38,3 +38,9 @@ To retrieve, throw all emission nodes' params into $k \times d$ Tensors:
 #### Transition Model
 Discrete categorical--categories are each possible chromatin state.
 |> Initialize to uniform?
+
+---
+
+_Mar 22, 2024_
+1. Add option directly provide fraction-of-genome tensors _already minibatched_
+2. --> ENCODE Pilot: run SimpleAGA on ^

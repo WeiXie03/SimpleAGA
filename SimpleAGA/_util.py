@@ -47,6 +47,38 @@ def find_nan_runs(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     # Return the starting and ending indices of NaN runs
     return start_indices, end_indices
 
+def slice_chrom_bins_genomic_coords(chrom_tensor: np.ndarray, coords_df: pd.DataFrame, bin_size: int) -> np.ndarray:
+    """
+    Slice out of the binned data for the chromosome the intervals specified by the given genomic coordinates.
+
+    Args
+    ----
+    chrom_tensor: The tensor for the chromosome.
+    coords_df: A DataFrame with columns "start", "end" for the genomic coordinates of the bins. Ignores other columns.
+    bin_size: The size of the bins in the data.
+    """
+    chrom_bins = coords_df.apply(lambda row: chrom_tensor[row["start"]:row["end"]+1], axis=1)
+    return np.stack(chrom_bins.values)
+
+def slice_chroms_bins_genomic_coords(chroms_tensors: dict[str, np.ndarray], coords_df: pd.DataFrame, bin_size: int, n_procs: int = None) -> dict[str, np.ndarray]:
+    """
+    Slice out of the binned data for each chromosome the intervals specified by the given genomic coordinates.
+
+    Args
+    ----
+    chroms_tensors: A dictionary of the chromosome names and their corresponding tensors.
+    coords_df: A DataFrame with columns "chr", "start", "end" for the genomic coordinates of the bins.
+    bin_size: The size of the bins in the data.
+    """
+    if n_procs == None:
+        n_procs = mp.cpu_count()
+
+    with mp.Pool(mp.cpu_count()) as pool:
+        full_tensors_coords_pairs = [(chroms_tensors[chrom], coords_df[coords_df["chr"] == chrom], bin_size) for chrom in chroms_tensors.keys()]
+        tensors_slices = pool.starmap(slice_chrom_bins_genomic_coords, full_tensors_coords_pairs)
+        chroms_bins = dict(zip(chroms_tensors.keys(), tensors_slices))
+    return chroms_bins
+
 def gen_chrom_intervs_tbl(chrom: str, procd_data: np.ndarray, missing_idx: np.ndarray, 
                            chrom_sizes: pd.Series, bin_size: int) -> pd.DataFrame:
     # TODO: move model.predict_proba() to all chroms function by using lengths arg

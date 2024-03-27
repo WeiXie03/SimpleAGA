@@ -36,7 +36,7 @@ def load_chrom_tensor_to_array(path: Path) -> np.ndarray:
 def load_chrom_tensor_to_array_spec_coords(intervs_info_df_chr: "pd.DataFrame | pd.core.groupby.generic.DataFrameGroupBy", binned_chroms_paths: pd.Series) -> np.ndarray:
     """
     Same as load_chrom_tensor_to_array, but takes a DataFrame of
-    genomic coordinates for the chromosome:
+    genomic coordinates (unbinned) for the chromosome:
     DataFrame must be the first 3 columns of a BED file:
         - Chromosome name
         - Start position
@@ -48,23 +48,26 @@ def load_chrom_tensor_to_array_spec_coords(intervs_info_df_chr: "pd.DataFrame | 
     else:
         # Path of data for this chromosome
         data = load_chrom_tensor_to_array(binned_chroms_paths[intervs_info_df_chr.index[0]])
+
         # Subset to coordinates
-        # intervs_info_df_chr = chrom, *start*, *end*
+        # intervs_info_df_chr = chrom, *start*, *end*, one chrom a row
+        # also ignore coords for chromosomes not in the data
         if len(intervs_info_df_chr.index) > 0:
-            return data[intervs_info_df_chr.iloc[:,1]:intervs_info_df_chr.iloc[:,2],:]
+            return data[intervs_info_df_chr.iloc[:,1]:intervs_info_df_chr.iloc[:,2], :]
         else:
             # No coordinates
             return np.empty(data.shape)
 
 def omit_missing(chrom_arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
-    Omit positions at which _any_ of the tracks are missing values from all_binneds
+    Omit positions at which _any_ of the tracks are missing values from all_binneds ___and___
+    remove any resulting empty 
     Returns:
         - a new tensor with the missing positions omitted, and
         - a tensor of the indices of the omitted positions
-    For a single chromosome (represented by one 2D tensor, each row a bigWig track)
+    For a single chromosome (represented by one 2D tensor, each column a bigWig track)
     """
-    # Find columns with NaN values
+    # Find rows with _any_ NaN values
     # "Any" _through_ columns, reducing the 1th dimension
     nan_rows = np.any(np.isnan(chrom_arr), 1)
     # Convert from bool mask to indices
@@ -118,10 +121,11 @@ class RunManager():
             raise ValueError("Must provide either a model, or num_labels and n_iter.")
         
     def load_all_chrom_arrays(self, binned_chroms_paths: pd.Series,
-                              n_threads=None) -> list[np.ndarray]:
+                              n_threads=None) -> dict[str, np.ndarray]:
         """
-        Maps load_chrom_tensor_to_array to all chromosomes in binned_chroms_paths,
-        returning them all in a list in the same order as in binned_chroms_paths.
+        First maps load_chrom_tensor_to_array to all chromosomes in binned_chroms_paths,
+        returning them all in a list in the same order as in binned_chroms_paths. Then inserts the
+        chromosome names as keys in a dictionary.
 
         Takes a Series including the paths to the binned data for each chromosome.
         Index must be the chromosome names. Must include a column "path" of paths.
@@ -135,20 +139,25 @@ class RunManager():
         print(f"Loading {len(binned_chroms_paths.index)} chromosomes with {n_threads} threads...")
 
         if isinstance(self.coords, pd.DataFrame):
-            chrom_arrs = self.coords.parallel_apply(load_chrom_tensor_to_array, axis=1,
+            chrom_arrs = self.coords.parallel_apply(load_chrom_tensor_to_array_spec_coords, axis=1,
                                                binned_chroms_paths=binned_chroms_paths)
+            
         elif self.coords == None:
             with ThreadPoolExecutor(n_threads) as pool:
                 chrom_arrs = pool.map(load_chrom_tensor_to_array, binned_chroms_paths.tolist())
         
-        return chrom_arrs
+        chrom_arrs_dict = dict(zip(self.coords.index, chrom_arrs))
+        return chrom_arrs_dict
     
     def train_batch(self, train_seqs: list[np.ndarray], seq_lens: list[int],
                     frac: float = 0.03, subsample_len: int = None,
+                    minibatch_subseqs: list[np.ndarray] = None,
                     n_procs: int = None):
         """
         Trains the model on random subsequences totalling `frac` of the sum of the lengths
         of the given sequences.
+        Optionally directly supply the minibatch of tracks as numpy arrays. If given,
+        `frac` and `subsample_len` are ignored.
         If `subsample_len` is given, samples `n` random subsequences each of length
         `subsample_len`, where `n`*`subsample_len` = `frac` * $sum_{seq} |seq|$.
         Otherwise, samples one random subsequence from each given sequence of length
@@ -164,21 +173,26 @@ class RunManager():
 
         # print("Training sequence data shapes:")
         # print([seq.shape for seq in train_seqs])
-        
-        if len(train_seqs) <= 0:
-            raise ValueError("Must provide at least one training sequence.")
-        elif len(train_seqs) == 1:
-            mini_start, mini_end = _util.slice_rand_subseq_idx(train_seqs[0], frac)
-            self.model.fit(train_seqs[0][mini_start:mini_end])
-        else:
-            # one from each sequence
-            if subsample_len == None: 
-                subseqs = _util.sample_minibatches(train_seqs, frac=frac, lens=seq_lens, rand_gen=self.rand_gen)
-            # n_samples random subsequences
-            else:
-                subseqs = _util.sample_minibatches(train_seqs, frac=frac, lens=seq_lens, subseq_len=subsample_len, rand_gen=self.rand_gen)
 
-            self.model.fit(np.vstack(np.concatenate(subseqs, axis=0)), lengths=_util.mp_arrays_lens(subseqs, n_procs))
+        if isinstance(minibatch_subseqs, None):
+            if len(train_seqs) <= 0:
+                raise ValueError("Must provide at least one training sequence.")
+
+            elif len(train_seqs) == 1:
+                mini_start, mini_end = _util.slice_rand_subseq_idx(train_seqs[0], frac)
+                # fit on the minibatch
+                self.model.fit(train_seqs[0][mini_start:mini_end])
+                return
+
+            else:
+                # one from each sequence
+                if subsample_len == None: 
+                    minibatch_subseqs = _util.sample_minibatches(train_seqs, frac=frac, lens=seq_lens, rand_gen=self.rand_gen)
+                # n_samples random subsequences of length subsample_len
+                else:
+                    minibatch_subseqs = _util.sample_minibatches(train_seqs, frac=frac, lens=seq_lens, subseq_len=subsample_len, rand_gen=self.rand_gen)
+        # fit on the minibatch
+        self.model.fit(np.vstack(np.concatenate(minibatch_subseqs, axis=0)), lengths=_util.mp_arrays_lens(minibatch_subseqs, n_procs))
 
     def gen_posteriors_tbl(self, train_seqs: list[np.ndarray], seq_lens: list[int], missing_idxs_list: list[np.ndarray], n_procs: int = None
                            ) -> pd.DataFrame:
@@ -196,7 +210,9 @@ class RunManager():
         if len(train_seqs) == 1:
             posteriors = self.model.predict_proba(train_seqs[0])
         else:
-            posteriors = self.model.predict_proba(train_seqs, lengths=seq_lens)
+            # predict_proba supports multivariate sequences as (n_samples, n_features), and
+            # mutliple sequences by concatenating along samples dimension
+            posteriors = self.model.predict_proba(np.vstack(train_seqs), lengths=seq_lens)
         
         tbl_posterios_half = pd.DataFrame(posteriors, columns=[f"posterior{i}" for i in range(1, self.model.n_components + 1)])
 
@@ -236,12 +252,23 @@ class RunManager():
         binned_tensors = self.load_all_chrom_arrays(binned_chroms_paths)
 
         with ProcessPoolExecutor(n_procs) as pool:
-            pruned_missidx_pairs_list = pool.map(omit_missing, binned_tensors)
-        pruned_tensors, chroms_miss_idx = zip(*pruned_missidx_pairs_list)
+            pruned_missidx_pairs_list = pool.map(omit_missing, binned_tensors.values())
+            pruned_tensors, chroms_miss_idx = zip(*pruned_missidx_pairs_list)
+        # Put the chromosome names back in
+        pruned_tensors = dict(zip(binned_tensors.keys(), pruned_tensors))
         print(f"Processed {len(pruned_tensors)} chromosomes")
-        # print("Missing indices:")
-        # for (chrom, miss_idx) in zip(self.chrom_sizes.index, chroms_miss_idx):
-        #     print(f"{chrom}: {miss_idx}")
+
+        # Remove chromosomes with no data after pruning (i.e. len(pruned tensor) == 0),
+        # both from chrom_sizes and pruned_tensors
+        # Save the indices of the empty tensors for later
+        empty_chroms_idx = list(filter(lambda i: pruned_tensors.values()[i].shape[0] == 0, range(len(pruned_tensors))))
+        pruned_tensors = dict(filter(lambda pair: pair[1].shape[0] != 0, pruned_tensors.items()))
+        # Throw out the corresponding chromosome sizes and missing indices
+        self.chrom_sizes = self.chrom_sizes.drop(self.chrom_sizes.index[empty_chroms_idx])
+        chroms_miss_idx = [chroms_miss_idx[i] for i in range(len(chroms_miss_idx)) if i not in empty_chroms_idx]
+
+        for (chrom, pruned_tensor, miss_idx) in zip(self.chrom_sizes.index, pruned_tensors, chroms_miss_idx):
+            print(f"{chrom}: pruned length = {pruned_tensor.shape[0]}, missing indices = {miss_idx}")
 
         # Mark each processed chromosome tensor length with its chromosome name
         procd_chroms_lens = pd.Series(_util.mp_arrays_lens(pruned_tensors, n_procs), index=self.chrom_sizes.index)
